@@ -107,16 +107,17 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int numberOfPacketsToLayer5ByB = 0;
 
     //Sender Side (A) Parameters
-    private int seqNoSender;
+    private int seqNoSender = 0;
     private int ackNoSender = 0;
-    private int ackNoExpectedSender;
+    private LinkedList<Packet> packetBufferLinkedList; // A pointer to current head of the packet buffer
+    private ArrayList<Packet> sendWindowPacketArrayList;
+    private boolean[] ackedList;
     private double waitTimeOutSender;
-    private Packet lastUnAckedPackageSender;
 
     //Reciever Side (B) Parameters
     private int ackNoReciever;
     private int seqNoReciever;
-    private int excptedSeqNoReciever;
+    private ArrayList<Packet> recieveWindowPacketArrayList;
 
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -141,20 +142,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
-        if(ackNoExpectedSender != seqNoSender){
-            System.out.println("aOutput Sender : Last Send Message Not Recieved ACK yet"+ lastUnAckedPackageSender.getSeqnum());
-            return;
-        }
-
-        int checksum = calculateCheckSum(message.getData(), seqNoSender, ackNoSender);
-        toLayer3(A, new Packet(seqNoSender, ackNoSender, checksum, message.getData()));
-        startTimer(A, waitTimeOutSender);
-        System.out.println("aOutput: Message Sent, TimerStart");
-        lastUnAckedPackageSender = new Packet(seqNoSender, ackNoSender, checksum, message.getData());
-        ackNoExpectedSender += message.getData().length()+1;
-        numberOfPacketsTransmittedByA++;
-
+        packetBufferLinkedList.add(new Packet(seqNoSender, -1, -1, message.getData()));
+        
     }
+
+    private void senderCheckBufferIfSend
 
     private int calculateCheckSum(String message, int seq, int ack){
         int checksum = 0;
@@ -205,7 +197,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
         System.out.println("Init Sender A");
         seqNoSender = 0;
         seqNoSender = 0;
-        WindowSize = 8;
+        ackedList = new boolean[WindowSize];
+        sendWindowPacketArrayList = new ArrayList<>(WindowSize);
         waitTimeOutSender = 5 * RxmtInterval;
 
     }
