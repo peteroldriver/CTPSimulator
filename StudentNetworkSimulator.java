@@ -1,4 +1,7 @@
 import java.util.*;
+
+import javax.security.auth.login.AccountLockedException;
+
 import java.io.*;
 
 public class StudentNetworkSimulator extends NetworkSimulator
@@ -106,17 +109,31 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int numberOfPacketsTransmittedByA = 0;
     private int numberOfPacketsToLayer5ByB = 0;
 
+
     //Sender Side (A) Parameters
-    private int seqNoSender;
+    private int seqNoSender = 0;
     private int ackNoSender = 0;
-    private int ackNoExpectedSender;
+    private LinkedList<PacketElement> sendWindowPacketElementLinkedList = new LinkedList<>();
     private double waitTimeOutSender;
-    private Packet lastUnAckedPackageSender;
+
+    private class PacketElement{
+        public Packet packet;
+        public boolean isSent;
+        public boolean isAcked;
+
+        public PacketElement(Packet packet){
+            this.packet = packet;
+            this.isAcked = false;
+            this.isSent = false;
+        }
+    }
 
     //Reciever Side (B) Parameters
     private int ackNoReciever;
     private int seqNoReciever;
-    private int excptedSeqNoReciever;
+    private HashMap<Integer, String> recieverUnconsumedHashMap = new HashMap<>();
+    private int currentSeqNoReadyToConsume;
+    private int consumedNo;
 
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -139,21 +156,51 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // has a message to send.  It is the job of your protocol to insure that
     // the data in such a message is delivered in-order, and correctly, to
     // the receiving upper layer.
+
+
     protected void aOutput(Message message)
     {
-        if(ackNoExpectedSender != seqNoSender){
-            System.out.println("aOutput Sender : Last Send Message Not Recieved ACK yet"+ lastUnAckedPackageSender.getSeqnum());
-            return;
+        pushToMessageBuffer(message);
+        updateSendWindow();
+        send();
+    }
+
+    private void pushToMessageBuffer(Message message){
+        int seq = getCurrentSeqNoSender();
+        int ack = getCurrentAckNoSender();
+        int check = calculateCheckSum(message.getData(), seq, ack);
+        Packet p = new Packet(seq, ack, check, message.getData());
+        sendWindowPacketElementLinkedList.addLast(new PacketElement(p));
+    }
+
+    private void send(){
+        int step = 0;
+        while(step < WindowSize && step<sendWindowPacketElementLinkedList.size()){
+            PacketElement currentPacketElement =sendWindowPacketElementLinkedList.get(step);
+            if(currentPacketElement.isSent == false){
+                toLayer3(A, currentPacketElement.packet);
+                startTimer(A, waitTimeOutSender);
+                currentPacketElement.isSent = true;
+                numberOfPacketsTransmittedByA++;
+            }
+            step++;
         }
+    }
 
-        int checksum = calculateCheckSum(message.getData(), seqNoSender, ackNoSender);
-        toLayer3(A, new Packet(seqNoSender, ackNoSender, checksum, message.getData()));
-        startTimer(A, waitTimeOutSender);
-        System.out.println("aOutput: Message Sent, TimerStart");
-        lastUnAckedPackageSender = new Packet(seqNoSender, ackNoSender, checksum, message.getData());
-        ackNoExpectedSender += message.getData().length()+1;
-        numberOfPacketsTransmittedByA++;
+    private void updateSendWindow(){
+        while(!sendWindowPacketElementLinkedList.isEmpty() && sendWindowPacketElementLinkedList.getFirst().isAcked == true){
+            ackNoSender = sendWindowPacketElementLinkedList.removeFirst().packet.getSeqnum();
+            
+        }
+    }
 
+    private int getCurrentSeqNoSender(){
+        seqNoSender++;
+        return seqNoSender % LimitSeqNo;
+    }
+
+    private int getCurrentAckNoSender(){
+        return ackNoSender;
     }
 
     private int calculateCheckSum(String message, int seq, int ack){
@@ -172,17 +219,22 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the B-side.
     protected void aInput(Packet packet)
     {
-        if(isCorrupted(packet)){
+        //check corruptions
+        if(isCorrupted(packet) ){
             numberOfCorruptedPacket++;
+            return;
         }
-        else if(ackNoExpectedSender != packet.getAcknum()){
-
+        int step = 0;
+        while(step < WindowSize && step < sendWindowPacketElementLinkedList.size()){
+            PacketElement p = sendWindowPacketElementLinkedList.get(step);
+            if(p.packet.getSeqnum() == packet.getAcknum()){
+                p.isAcked = true;
+                break;
+            }
+            step++;
         }
-        else{
-            seqNoSender = packet.getAcknum();
-            stopTimer(A);
-        }
-
+        updateSendWindow();
+        send();
     }
     
     // This routine will be called when A's timer expires (thus generating a 
@@ -191,9 +243,16 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // for how the timer is started and stopped. 
     protected void aTimerInterrupt()
     {
-        toLayer3(A, lastUnAckedPackageSender);
-        startTimer(A, waitTimeOutSender);
-        numberOfRetransmittedPacket++;
+        int step = 0;
+        while (step < WindowSize && step<sendWindowPacketElementLinkedList.size()) {
+            PacketElement currentPacket = sendWindowPacketElementLinkedList.get(step);
+            if(currentPacket.isAcked == false && currentPacket.isSent == true){
+                toLayer3(A, currentPacket.packet);
+                startTimer(A, waitTimeOutSender);
+                numberOfRetransmittedPacket++;
+            }
+            step++;
+        }
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -203,9 +262,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aInit()
     {
         System.out.println("Init Sender A");
-        seqNoSender = 0;
-        seqNoSender = 0;
-        WindowSize = 8;
+        seqNoSender = -1;
+        ackNoSender = 0;
         waitTimeOutSender = 5 * RxmtInterval;
 
     }
@@ -220,15 +278,24 @@ public class StudentNetworkSimulator extends NetworkSimulator
             numberOfCorruptedPacket++;
             return;
         }
-        else if(packet.getSeqnum() != ackNoReciever){
-            return;
-        }
-        else{
-            toLayer5(packet.getPayload()); numberOfPacketsToLayer5ByB++;
-            ackNoReciever += packet.getPayload().length()+1;
-            Packet p = new Packet(seqNoReciever, ackNoReciever, calculateCheckSum("", seqNoReciever, ackNoReciever), "");
-            toLayer3(B, p);
-            numberOfAckedPacketSendByB++;
+        int check = calculateCheckSum("ACK", 1, packet.getSeqnum());
+        toLayer3(B, new Packet(1,packet.getSeqnum(),check,"ACK"));
+        numberOfAckedPacketSendByB++;
+        recieverUnconsumedHashMap.put(packet.getSeqnum(),packet.getPayload());
+
+        tryToConsumeMessage();
+        
+    }
+
+    private void tryToConsumeMessage(){
+        currentSeqNoReadyToConsume = consumedNo % LimitSeqNo;
+        System.out.println("currentSeqNoReadyToConsume " + currentSeqNoReadyToConsume);
+        while(recieverUnconsumedHashMap.get(currentSeqNoReadyToConsume)!=null){
+            toLayer5(recieverUnconsumedHashMap.get(currentSeqNoReadyToConsume));
+            consumedNo++;
+            numberOfPacketsToLayer5ByB++;
+            recieverUnconsumedHashMap.remove(currentSeqNoReadyToConsume);
+            currentSeqNoReadyToConsume = consumedNo % WindowSize;
         }
     }
     
@@ -239,9 +306,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void bInit()
     {
         System.out.println("bInit");
-        excptedSeqNoReciever = 0;
+
         seqNoReciever = 0;
         ackNoReciever = 0;
+        consumedNo = 0;
+        currentSeqNoReadyToConsume = 0;
     }
 
     // Use to print final statistics
@@ -254,8 +323,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	System.out.println("Number of data packets delivered to layer 5 at B:" + numberOfPacketsToLayer5ByB);
     	System.out.println("Number of ACK packets sent by B:" + numberOfAckedPacketSendByB);
     	System.out.println("Number of corrupted packets:" + numberOfCorruptedPacket);
-    	System.out.println("Ratio of lost packets:" +   numberOfAckedPacketSendByB / numberOfPacketsTransmittedByA);
-    	System.out.println("Ratio of corrupted packets:" + "<YourVariableHere>");
+    	System.out.println("Ratio of lost packets:" +  numberOfRetransmittedPacket / (numberOfAckedPacketSendByB+numberOfPacketsTransmittedByA));
+    	System.out.println("Ratio of corrupted packets:" + numberOfCorruptedPacket / (numberOfPacketsTransmittedByA+numberOfAckedPacketSendByB));
     	System.out.println("Average RTT:" + "<YourVariableHere>");
     	System.out.println("Average communication time:" + "<YourVariableHere>");
     	System.out.println("==================================================");
