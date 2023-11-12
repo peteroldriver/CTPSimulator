@@ -298,6 +298,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
                         pktFound = false;
 
                         ArrayList<Packet> receivedBuffer = new ArrayList<Packet>();
+
                         for(Packet k : recievedBuffer){
                             receivedBuffer.add(k);
                         }
