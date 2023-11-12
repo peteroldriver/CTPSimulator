@@ -1,8 +1,16 @@
-public class Packet {
+public class Packet
+{
     private int seqnum;
     private int acknum;
     private int checksum;
     private String payload;
+
+    public Packet() {
+        seqnum = -1;
+        acknum = -1;
+        checksum = -1;
+        payload = "";
+    }
     
     public Packet(Packet p)
     {
@@ -102,4 +110,5 @@ public class Packet {
         return("seqnum: " + seqnum + "  acknum: " + acknum + "  checksum: " +
                checksum + "  payload: " + payload);
     }
+    
 }
