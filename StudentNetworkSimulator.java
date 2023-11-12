@@ -143,6 +143,16 @@ public class StudentNetworkSimulator extends NetworkSimulator
         return checksum;
     }
 
+    private boolean inReceivedWindow(int seqNum){
+        boolean inReceived = false;
+        for(int i=0; i<WindowSize; i++){
+            if((recievedBase + i) % (LimitSeqNo) == seqNum){
+                inReceived = true;
+            }
+        }
+        return inReceived;
+    }
+
     private void increaseSeqNum(){
         if (nextSeqNo + 1 == LimitSeqNo) {
             nextSeqNo = 0;
@@ -152,7 +162,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         }
     }
 
-    private boolean removeFromSent(int seqNum){
+    private boolean removeFromSentBuffer(int seqNum){
         boolean pktFound = false;
         for(Packet i : unAckedBuffer){
             if(i.getSeqnum() == seqNum){
@@ -168,15 +178,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
             }
         }
         return pktFound;
-    }
-    private boolean inRecieveWindow(int seqnu){
-        boolean inReceived = false;
-        for(int i=0; i<WindowSize; i++){
-            if((recievedBase + i) % (LimitSeqNo) == seqnu){
-                inReceived = true;
-            }
-        }
-        return inReceived;
     }
 
     // This routine will be called whenever the upper layer at the sender [A]
@@ -236,7 +237,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
             System.out.println("\nPacket is correctly received.\n");
             stopTimer(A);
             rtt += (getTime() - timerA);
-            removeFromSent(packet.getSeqnum());
+            removeFromSentBuffer(packet.getSeqnum());
             if(unAckedBuffer.size() < WindowSize && unSentBuffer.size() > 0){
                 System.out.println("Sending the next packet in the window.");
                 timerA = getTime();
@@ -257,10 +258,10 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aTimerInterrupt()
     {
         System.out.println("\n-------------- A TIMER INTERRUPT --------------");
-        stopTimer(A);
         toLayer3(A, unAckedBuffer.peek());
         System.out.println("Retransmitting packet:" + unAckedBuffer.peek().getPayload());
         startTimer(A, RxmtInterval);
+
         pktReTransA++;
         commuTime += (getTime() - timerB);
     }
@@ -289,7 +290,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         System.out.printf("\n************************************\n");
 
         if(checksum == packet.getChecksum()){
-            if(inRecieveWindow(packet.getSeqnum())){
+            if(inReceivedWindow(packet.getSeqnum())){
                 recievedBuffer.add(packet);
                 if (packet.getSeqnum() == recievedBase) {
                     boolean pktFound = true;
