@@ -110,7 +110,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
 
     // Parameters for simulation stats
     int pktSent = 0;
-    int pktReTransA = 0;
+    int pktReTrans = 0;
     int pktReceived = 0;
     int ackSent = 0;
     int corrupted = 0;
@@ -162,7 +162,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         }
     }
 
-    private boolean removeFromSentBuffer(int seqNum){
+    private void removeFromSentBuffer(int seqNum){
         boolean pktFound = false;
         for(Packet i : unAckedBuffer){
             if(i.getSeqnum() == seqNum){
@@ -177,7 +177,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
                 }
             }
         }
-        return pktFound;
     }
 
     // This routine will be called whenever the upper layer at the sender [A]
@@ -262,7 +261,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         System.out.println("Retransmitting packet:" + unAckedBuffer.peek().getPayload());
         startTimer(A, RxmtInterval);
 
-        pktReTransA++;
+        pktReTrans++;
         commuTime += (getTime() - timerB);
     }
     
@@ -352,13 +351,13 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	// TO PRINT THE STATISTICS, FILL IN THE DETAILS BY PUTTING VARIBALE NAMES. DO NOT CHANGE THE FORMAT OF PRINTED OUTPUT
     	System.out.println("\n\n===============STATISTICS=======================");
     	System.out.println("Number of original packets transmitted by A: " + pktSent);
-    	System.out.println("Number of retransmissions by A: " + pktReTransA);
+    	System.out.println("Number of retransmissions by A: " + pktReTrans);
     	System.out.println("Number of data packets delivered to layer 5 at B: " + pktReceived);
     	System.out.println("Number of ACK packets sent by B: " + ackSent);
     	System.out.println("Number of corrupted packets: " + corrupted);
-    	System.out.println("Ratio of lost packets: " + ((pktReTransA-corrupted)/(pktSent+pktReTransA+ackSent)));
-    	System.out.println("Ratio of corrupted packets: " + ((corrupted)/((pktSent+pktReTransA)+ackSent-(pktReTransA-corrupted))));
-    	System.out.println("Average RTT: " + (rtt/pktSent));
+    	System.out.println("Ratio of lost packets: " + (((double)(pktReTrans -corrupted))/((double)(pktSent+ pktReTrans +ackSent))));
+    	System.out.println("Ratio of corrupted packets: " + ((double)(corrupted)/((double)(pktSent+ pktReTrans)+ackSent-(pktReTrans -corrupted))));
+    	System.out.println("Average RTT: " + (rtt/pktSent/2));
     	System.out.println("Average communication time: " + (commuTime/pktSent));
     	System.out.println("==================================================");
 
