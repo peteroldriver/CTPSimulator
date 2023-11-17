@@ -96,17 +96,18 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // these variables to send messages error free!  They can only hold
     // state information for A or B.
     // Also add any necessary methods (e.g. checksum of a String)
-    int nextSeqNo = 0;
-    int lastSeqNo = 0;
+    int currentSeqNo = 0;
+    int expectedACK = 0;
+    int highestAckedSeqNum = -1;
     int sendBase = 0;
-    int recievedBase = 0;
+    int receivedBase = 0;
 
     double timerA = 0.0;
     double timerB = 0.0;
 
+    Queue<Packet> senderWindow = new LinkedList<Packet>();
     Queue<Packet> unAckedBuffer = new LinkedList<Packet>();
-    Queue<Packet> unSentBuffer = new LinkedList<Packet>();
-    LinkedList<Packet> recievedBuffer = new LinkedList<Packet>();
+    LinkedList<Packet> receivedBuffer = new LinkedList<Packet>();
 
     // Parameters for simulation stats
     int pktSent = 0;
@@ -143,22 +144,21 @@ public class StudentNetworkSimulator extends NetworkSimulator
         return checksum;
     }
 
-    private boolean inReceivedWindow(int seqNum){
-        boolean inReceived = false;
-        for(int i=0; i<WindowSize; i++){
-            if((recievedBase + i) % (LimitSeqNo) == seqNum){
-                inReceived = true;
-            }
-        }
-        return inReceived;
-    }
-
     private void increaseSeqNum(){
-        if (nextSeqNo + 1 == LimitSeqNo) {
-            nextSeqNo = 0;
+        if (currentSeqNo + 1 == LimitSeqNo) {
+            currentSeqNo = 0;
         }
         else {
-            nextSeqNo++;
+            currentSeqNo++;
+        }
+    }
+
+    private void increaseReceivedBase(){
+        if (receivedBase + 1 == LimitSeqNo) {
+            receivedBase = 0;
+        }
+        else {
+            receivedBase++;
         }
     }
 
@@ -179,6 +179,72 @@ public class StudentNetworkSimulator extends NetworkSimulator
         }
     }
 
+    private void processInOrderPacket(Packet packet) {
+        System.out.println("Transmitting Packet to Layer 5, Payload: " + packet.getPayload());
+        toLayer5(packet.getPayload());
+        pktReceived++;
+
+        highestAckedSeqNum = packet.getSeqnum();
+
+        // Process any buffered packets that are now in order
+        while (!receivedBuffer.isEmpty() && receivedBuffer.peek().getSeqnum() == receivedBase + 1) {
+            increaseReceivedBase(); // Increase before processing the next in-order packet
+            Packet nextInOrder = receivedBuffer.poll();
+            System.out.println("Transmitting Packet to Layer 5, Payload: " + nextInOrder.getPayload());
+            toLayer5(nextInOrder.getPayload());
+            pktReceived++;
+
+            highestAckedSeqNum = nextInOrder.getSeqnum();
+        }
+        sendACKWithSACK(receivedBase);
+        increaseReceivedBase();
+    }
+
+    private void processOutOfOrderPacket(Packet packet) {
+        for (Packet pkt : receivedBuffer) {
+            if (packet.getSeqnum() == pkt.getSeqnum()) {
+                return;
+            }
+        }
+        System.out.println("Packet not in order, buffered");
+        receivedBuffer.add(packet);
+        System.out.println("Receiver Buffer: " + receivedBuffer.toString());
+
+        sendACKWithSACK(packet.getSeqnum());
+    }
+
+    private boolean isDuplicate(int seqNum) {
+        // Calculate the range of acceptable sequence numbers
+        int upperBound = (receivedBase + WindowSize - 1) % LimitSeqNo;
+
+        if (receivedBase <= upperBound) {
+            // No wrapping in the window
+            return !(seqNum >= receivedBase && seqNum <= upperBound);
+        } else {
+            // Wrapping occurs in the window
+            return !(seqNum >= receivedBase || seqNum <= upperBound);
+        }
+    }
+
+    private void sendACKWithSACK(int ackNum) {
+        Packet ackPkt = new Packet(ackNum, ackNum, 0);
+
+        LinkedList<Packet> sackList = receivedBuffer;
+        Collections.sort(sackList, Comparator.comparingInt(Packet::getSeqnum));
+
+        ackPkt.setSack(sackList);
+        ackPkt.setChecksum(calculateCheckSum(ackPkt.getPayload(), ackPkt.getSeqnum(), ackPkt.getAcknum()));
+
+        toLayer3(B, ackPkt);
+        ackSent++;
+    }
+
+    private void resendACK(int seqNum) {
+        Packet ackPkt = new Packet(seqNum, seqNum, 0);
+        ackPkt.setChecksum(calculateCheckSum(ackPkt.getPayload(), ackPkt.getSeqnum(), ackPkt.getAcknum()));
+        toLayer3(B, ackPkt);
+    }
+
     // This routine will be called whenever the upper layer at the sender [A]
     // has a message to send.  It is the job of your protocol to insure that
     // the data in such a message is delivered in-order, and correctly, to
@@ -187,28 +253,27 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aOutput(Message message)
     {
         pktSent++;
-        Packet pktA = new Packet(nextSeqNo,0,0,message.getData());
-        pktA.setChecksum(calculateCheckSum(pktA.getPayload(), pktA.getSeqnum(), pktA.getAcknum()));
+        Packet sendPkt = new Packet(currentSeqNo,0,0,message.getData());
+        sendPkt.setChecksum(calculateCheckSum(sendPkt.getPayload(), sendPkt.getSeqnum(), sendPkt.getAcknum()));
 
         if (unAckedBuffer.size() < WindowSize) {
             System.out.println("\n-----------A OUTPUT----------");
+
             System.out.println("Starting the timer.\n");
             timerA = getTime();
             timerB = getTime();
-            toLayer3(A, pktA);
-            unAckedBuffer.add(pktA);
+            toLayer3(A, sendPkt);
+            unAckedBuffer.add(sendPkt);
             startTimer(A, RxmtInterval);
 
-            System.out.printf("\nPAYLOAD: %s \nLength: %d\n", new String(pktA.getPayload()).trim(), new String(pktA.getPayload()).trim().length());
+            expectedACK = currentSeqNo;
+            increaseSeqNum();
+
             System.out.printf("\n************************************\n");
-            System.out.printf("Sending packet \nSeq no: %d\nChecksum: %d\nGenerated Checksum: %d\n", pktA.getSeqnum(), pktA.getChecksum(), calculateCheckSum(message.getData(), pktA.getSeqnum(), pktA.getAcknum()));
-            System.out.printf("\n************************************\n");
+            System.out.printf("Sending packet \nSeqNo: %d\nChecksum: %d\nGenerated Checksum: %d\n", sendPkt.getSeqnum(), sendPkt.getChecksum(), calculateCheckSum(message.getData(), sendPkt.getSeqnum(), sendPkt.getAcknum()));
+            System.out.println("UnAcked Buffer: " + unAckedBuffer.toString());
+            System.out.println("************************************");
         }
-        else {
-            unSentBuffer.add(pktA);
-        }
-        increaseSeqNum();
-        return;
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -226,24 +291,38 @@ public class StudentNetworkSimulator extends NetworkSimulator
         System.out.println("\n-------------- A INPUT --------------");
 
         // Print details of the received packet
-        System.out.printf("Received packet details - Seqno: %d, Ackno: %d, Checksum: %d\n", packet.getSeqnum(), packet.getAcknum(), packet.getChecksum());
+        System.out.println(("Current SeqNo: " + currentSeqNo));
+        System.out.println("Received packet details: " + packet.toString());
 
-        if (checksum != packet.getChecksum()) { // Check for corrupt packet
-            System.out.println("\nPacket is corrupted or not in order.\n");
+        // Check for corrupt packet
+        if (checksum != packet.getChecksum()) {
+            System.out.println("\nPacket is corrupted.");
             corrupted++;
+            return;
         }
         else {
-            System.out.println("\nPacket is correctly received.\n");
-            stopTimer(A);
-            rtt += (getTime() - timerA);
-            removeFromSentBuffer(packet.getSeqnum());
-            if(unAckedBuffer.size() < WindowSize && unSentBuffer.size() > 0){
+            int[] sack = packet.getSack();
+            for (int seq : sack) {
+                if (seq != -1) {  // Assuming -1 indicates an empty slot in SACK
+                    removeFromSentBuffer(seq);
+                }
+            }
+
+            System.out.println("\nPacket is correctly received. Expected ACK:" + expectedACK + "\n");
+
+            if (expectedACK == packet.getAcknum()) {
+                removeFromSentBuffer(packet.getSeqnum());
+                stopTimer(A);
+                rtt += (getTime() - timerA);
+            }
+
+            while (unAckedBuffer.size() < WindowSize && senderWindow.size() > 0) {
                 System.out.println("Sending the next packet in the window.");
                 timerA = getTime();
                 timerB = getTime();
-                Packet nextPkt = unSentBuffer.poll();
+
+                Packet nextPkt = senderWindow.poll();
                 toLayer3(A, nextPkt);
-                unSentBuffer.remove();
                 unAckedBuffer.add(nextPkt);
                 startTimer(A, RxmtInterval);
             }
@@ -257,12 +336,17 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aTimerInterrupt()
     {
         System.out.println("\n-------------- A TIMER INTERRUPT --------------");
-        toLayer3(A, unAckedBuffer.peek());
-        System.out.println("Retransmitting packet:" + unAckedBuffer.peek().getPayload());
-        startTimer(A, RxmtInterval);
 
-        pktReTrans++;
-        commuTime += (getTime() - timerB);
+        // Retransmit all packets in the unacknowledged buffer
+        for (Packet pkt : new LinkedList<>(unAckedBuffer)) {
+            System.out.println("Retransmitting packet: " + pkt.getPayload());
+            toLayer3(A, pkt);
+            pktReTrans++;
+        }
+
+        // Restart the timer
+        startTimer(A, RxmtInterval);
+        timerA = getTime();
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -282,56 +366,30 @@ public class StudentNetworkSimulator extends NetworkSimulator
 
     protected void bInput(Packet packet)
     {
-        System.out.println("\n--------------- B INPUT --------------");
         int checksum = calculateCheckSum(packet.getPayload(), packet.getSeqnum(), packet.getAcknum());
-        System.out.printf("\n************************************\n");
+
+        System.out.println("\n--------------- B INPUT --------------");
         System.out.printf("Payload: %s\nSeqno: %d\nPktchecksum: %d \nGenerated checksum: %d \nLength: %d", new String(packet.getPayload()).trim(), packet.getSeqnum(), packet.getChecksum(), checksum, new String(packet.getPayload()).trim().length());
-        System.out.printf("\n************************************\n");
+        System.out.println("\nReceived Base: " + receivedBase);
+        System.out.printf("************************************\n");
 
+        // Checksum valid, packet received
         if(checksum == packet.getChecksum()){
-            if(inReceivedWindow(packet.getSeqnum())){
-                recievedBuffer.add(packet);
-                if (packet.getSeqnum() == recievedBase) {
-                    boolean pktFound = true;
-                    while(pktFound){
-                        pktFound = false;
-
-                        ArrayList<Packet> receivedBuffer = new ArrayList<Packet>();
-
-                        for(Packet k : recievedBuffer){
-                            receivedBuffer.add(k);
-                        }
-
-                        for(Packet pck : receivedBuffer) {
-                            if(pck.getSeqnum() == recievedBase) {
-                                lastSeqNo = recievedBase;
-                                pktFound = true;
-                                pktReceived++;
-                                toLayer5(pck.getPayload());
-                                recievedBuffer.remove(pck);
-                                recievedBase = (recievedBase + 1) % LimitSeqNo;
-                                break;
-                            }
-                        }
-                    }
-                    Packet ackedPkt = new Packet(lastSeqNo, 1, 0);
-                    ackedPkt.setChecksum(calculateCheckSum(ackedPkt.getPayload(), ackedPkt.getSeqnum(), ackedPkt.getAcknum()));
-                    toLayer3(B, ackedPkt);
-                    ackSent++;
-                    System.out.printf("\nSent data to layer 5 with packet: %d and %d", packet.getSeqnum(), pktReceived);
+            if ((isDuplicate(packet.getSeqnum()))) {
+                // Find a duplicate packet, resend ACK
+                System.out.println("Duplicate packet received.");
+                resendACK(packet.getSeqnum());
+            }
+            else {
+                if (packet.getSeqnum() == receivedBase) {
+                    processInOrderPacket(packet);
+                } else {
+                    processOutOfOrderPacket(packet);
                 }
             }
-            else{
-                Packet pktB = new Packet(packet.getSeqnum(),1,0);
-                pktB.setChecksum(calculateCheckSum(pktB.getPayload(), pktB.getSeqnum(), pktB.getAcknum()));
-                ackSent++;
-                toLayer3(B, pktB);
-                System.out.println("\nPacket corrupted or not in correct order\n\n");
-                System.out.println("\nResending previous packet");
-                System.out.printf("\nSeqno: %d \nAckno: %d \nChecksum: %d\n", pktB.getSeqnum(), pktB.getAcknum(), pktB.getChecksum());
-            }
         }
-        else{
+        else {
+            System.out.println("Packet is corrupted\n");
             corrupted++;
         }
     }
@@ -342,7 +400,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // of entity B).
     protected void bInit()
     {
-        recievedBase = 0;
+        receivedBase = 0;
+        highestAckedSeqNum = -1;
     }
 
     // Use to print final statistics
