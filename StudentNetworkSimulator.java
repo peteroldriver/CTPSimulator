@@ -233,6 +233,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         Collections.sort(sackList, Comparator.comparingInt(Packet::getSeqnum));
 
         ackPkt.setSack(sackList);
+        System.out.println("ACK PACKET TEST: " + ackPkt.toString());
         ackPkt.setChecksum(calculateCheckSum(ackPkt.getPayload(), ackPkt.getSeqnum(), ackPkt.getAcknum()));
 
         toLayer3(B, ackPkt);
@@ -338,7 +339,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         System.out.println("\n-------------- A TIMER INTERRUPT --------------");
 
         // Retransmit all packets in the unacknowledged buffer
-        for (Packet pkt : new LinkedList<>(unAckedBuffer)) {
+        for (Packet pkt : unAckedBuffer) {
             System.out.println("Retransmitting packet: " + pkt.getPayload());
             toLayer3(A, pkt);
             pktReTrans++;
